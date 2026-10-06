@@ -1,83 +1,103 @@
-"""Demo capacity model: required headcount via Erlang C.
+"""Manufacturing capacity model.
 
-Pure business logic, no UI imports. Keep your real capacity models in this
-same style (plain functions in/out) so they stay runnable and testable on
-their own, independent of the hub.
+Pipeline: monthly program demand (wide) -> unpivot -> explode through the
+BOM (quantity-per-unit x make %) -> join routing (hours-per-unit x route
+ratio) -> join workcenter available hours -> required hours & utilization.
+
+Pure business logic, no UI imports, so it can be run/tested independently
+of the hub.
+
+Assumption worth flagging: "Demand_Quantity" is computed as
+ceil(monthly Demand x BOM Quantity x MakePercent) -- i.e. it scales with
+the month's program demand, not just the BOM ratio on its own (a value that
+didn't vary by month wouldn't fit the resulting [Month, Program, Part, ...]
+shape). Flag if that's not the intended formula.
 """
 import math
-from dataclasses import dataclass
 
 import pandas as pd
 
-
-@dataclass
-class CapacityInputs:
-    volume_per_day: float       # contacts/transactions per day
-    aht_seconds: float          # average handle time, seconds
-    shrinkage_pct: float        # 0-100, non-productive time (breaks, training, etc.)
-    target_service_level_pct: float  # 0-100, e.g. 80 for an 80/20 SLA
-    target_answer_time_sec: float    # acceptable wait time, seconds
-    hours_per_agent_per_day: float = 8.0
+REQUIRED_SHEETS = ('Program Monthly Demand', 'BOM', 'Route Information', 'Workcenter Information')
 
 
-def _pwait(agents: int, traffic_erlangs: float) -> float:
-    """Erlang C probability of wait, standard formula."""
-    sum_terms = sum((traffic_erlangs ** n) / math.factorial(n) for n in range(agents))
-    last_term = (traffic_erlangs ** agents) / math.factorial(agents)
-    numerator = last_term * (agents / (agents - traffic_erlangs))
-    denominator = sum_terms + numerator
-    return numerator / denominator
+def unpivot_monthly_demand(program_monthly_demand: pd.DataFrame) -> pd.DataFrame:
+    """Wide [Program, <month columns>] -> long [Month (date), Program (str), Demand (int)]."""
+    df = program_monthly_demand.copy()
+    program_col = df.columns[0]  # the index column, whatever it's labeled
+    long = df.melt(id_vars=program_col, var_name='Month', value_name='Demand')
+    long = long.rename(columns={program_col: 'Program'})
+    long['Program'] = long['Program'].astype(str)
+    long['Month'] = pd.to_datetime(long['Month']).dt.to_period('M').dt.to_timestamp()
+    long['Demand'] = long['Demand'].astype(int)
+    return long
 
 
-def service_level(agents: int, traffic_erlangs: float, aht_seconds: float, target_answer_time_sec: float) -> float:
-    """Fraction of contacts answered within target_answer_time_sec."""
-    if agents <= traffic_erlangs:
-        return 0.0
-    pwait = _pwait(agents, traffic_erlangs)
-    exponent = -(agents - traffic_erlangs) * (target_answer_time_sec / aht_seconds)
-    return 1 - pwait * math.exp(exponent)
+def build_demand_profile(monthly_demand: pd.DataFrame, bom: pd.DataFrame) -> pd.DataFrame:
+    """Explode program demand into per-part demand via the BOM (quantity-per-unit x make %)."""
+    merged = monthly_demand.merge(bom, on='Program', how='inner')
+    merged['Demand_Quantity'] = (
+        merged['Demand'] * merged['Quantity'] * merged['MakePercent']
+    ).apply(math.ceil)
+    return merged[['Month', 'Program', 'Part', 'Demand_Quantity']]
 
 
-def required_agents(inputs: CapacityInputs) -> int:
-    """Smallest agent count meeting the target service level."""
-    calls_per_second = inputs.volume_per_day / (inputs.hours_per_agent_per_day * 3600)
-    traffic_erlangs = calls_per_second * inputs.aht_seconds
-
-    agents = max(1, math.ceil(traffic_erlangs))
-    target = inputs.target_service_level_pct / 100
-    while service_level(agents, traffic_erlangs, inputs.aht_seconds, inputs.target_answer_time_sec) < target:
-        agents += 1
-        if agents > traffic_erlangs + 500:  # safety valve against pathological inputs
-            break
-    return agents
+def join_route_information(demand_profile: pd.DataFrame, route_information: pd.DataFrame) -> pd.DataFrame:
+    merged = demand_profile.merge(route_information, on='Part', how='inner')
+    return merged[[
+        'Month', 'Program', 'Part', 'Demand_Quantity',
+        'Tasklist_Num', 'Operation', 'Workcenter', 'HPU', 'Route_Ratio',
+    ]]
 
 
-def run_capacity_model(inputs: CapacityInputs) -> dict:
-    """Full result: required FTE plus a volume-sensitivity table for charting."""
-    base_agents = required_agents(inputs)
-    shrinkage_factor = 1 - (inputs.shrinkage_pct / 100)
-    required_fte = base_agents / shrinkage_factor if shrinkage_factor > 0 else float("inf")
+def join_workcenter_information(routed: pd.DataFrame, workcenter_information: pd.DataFrame) -> pd.DataFrame:
+    merged = routed.merge(workcenter_information, on='Workcenter', how='inner')
+    return merged[[
+        'Month', 'Program', 'Part', 'Demand_Quantity',
+        'Tasklist_Num', 'Operation', 'Workcenter', 'Available_Hours', 'HPU', 'Route_Ratio',
+    ]]
 
-    rows = []
-    for multiplier in (0.7, 0.85, 1.0, 1.15, 1.3):
-        scenario_inputs = CapacityInputs(
-            volume_per_day=inputs.volume_per_day * multiplier,
-            aht_seconds=inputs.aht_seconds,
-            shrinkage_pct=inputs.shrinkage_pct,
-            target_service_level_pct=inputs.target_service_level_pct,
-            target_answer_time_sec=inputs.target_answer_time_sec,
-            hours_per_agent_per_day=inputs.hours_per_agent_per_day,
-        )
-        scenario_agents = required_agents(scenario_inputs)
-        scenario_fte = scenario_agents / shrinkage_factor if shrinkage_factor > 0 else float("inf")
-        rows.append({
-            "volume_per_day": round(scenario_inputs.volume_per_day),
-            "required_agents": scenario_agents,
-            "required_fte": round(scenario_fte, 1),
-        })
+
+def compute_required_hours(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df['Required_Hours'] = df['Demand_Quantity'] * df['HPU'] * df['Route_Ratio']
+    df['Util_Increment'] = df['Required_Hours'] / df['Available_Hours']
+    return df
+
+
+def pivot_by_workcenter_month(raw_output: pd.DataFrame, value_col: str) -> pd.DataFrame:
+    """index=Workcenter, columns=Month, values=sum(value_col)."""
+    pivot = raw_output.pivot_table(
+        index='Workcenter', columns='Month', values=value_col, aggfunc='sum', fill_value=0,
+    )
+    return pivot.sort_index(axis=1)
+
+
+def workcenter_program_breakdown(raw_output: pd.DataFrame, workcenter: str, value_col: str) -> pd.DataFrame:
+    """index=Month, columns=Program, values=sum(value_col), for one workcenter. Feeds the stacked chart."""
+    subset = raw_output[raw_output['Workcenter'] == workcenter]
+    pivot = subset.pivot_table(index='Month', columns='Program', values=value_col, aggfunc='sum', fill_value=0)
+    return pivot.sort_index()
+
+
+def run_capacity_model(sheets: dict[str, pd.DataFrame]) -> dict:
+    """Run the full pipeline. `sheets` is the dict returned by excel_io.load_workbook."""
+    missing = [name for name in REQUIRED_SHEETS if name not in sheets]
+    if missing:
+        raise ValueError(f"Workbook is missing required sheet(s): {', '.join(missing)}")
+
+    monthly_demand = unpivot_monthly_demand(sheets['Program Monthly Demand'])
+    demand_profile = build_demand_profile(monthly_demand, sheets['BOM'])
+    routed = join_route_information(demand_profile, sheets['Route Information'])
+    with_workcenter = join_workcenter_information(routed, sheets['Workcenter Information'])
+    raw_output = compute_required_hours(with_workcenter)
+
+    available_hours_by_workcenter = (
+        sheets['Workcenter Information'].set_index('Workcenter')['Available_Hours'].to_dict()
+    )
 
     return {
-        "required_agents": base_agents,
-        "required_fte": round(required_fte, 1),
-        "sensitivity_table": pd.DataFrame(rows),
+        'raw_output': raw_output,
+        'util_pivot': pivot_by_workcenter_month(raw_output, 'Util_Increment'),
+        'hours_pivot': pivot_by_workcenter_month(raw_output, 'Required_Hours'),
+        'available_hours_by_workcenter': available_hours_by_workcenter,
     }

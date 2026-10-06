@@ -12,7 +12,7 @@ registers itself on startup.
 from nicegui import ui
 
 # Side-effecting imports: each of these registers a tool via @register.
-from hub.pages import capacity_model_page, etl_page, excel_viewer_page  # noqa: F401
+from hub.pages import capacity_model_page, etl_page  # noqa: F401
 from hub.pages.home import render_home
 from hub.core import registry
 
@@ -22,7 +22,7 @@ APP_TITLE = 'Capacity Hub'
 @ui.page('/')
 def main_page() -> None:
     ui.colors(primary='#2563eb')
-    content = ui.column().classes('w-full max-w-5xl mx-auto p-6 gap-4')
+    content = ui.column().classes('w-full max-w-7xl mx-auto p-6 gap-4')
 
     def show(key: str | None) -> None:
         content.clear()
@@ -51,7 +51,7 @@ def main_page() -> None:
             ui.button(tool.title, icon=tool.icon, on_click=lambda t=tool: show(t.key)) \
                 .props('flat align=left no-caps').classes('w-full justify-start')
 
-    show(None)
+    show('capacity_model')
 
 
 def main() -> None:

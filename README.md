@@ -23,19 +23,19 @@ hub/
   main.py            entry point - builds the window, sidebar, and routing
   core/
     registry.py       plugin registry tools register themselves into
-    io_helpers.py      shared "save as CSV" native file dialog
+    io_helpers.py      shared native "save as" dialogs (single CSV or multi-sheet Excel)
+    display.py         ui.table-safe DataFrame formatting (stringifies date headers, etc.)
     paths.py           PROJECT_ROOT / DATA_DIR constants
   tools/               pure business logic, no UI code - script authors live here
-    capacity_model.py
-    etl_example.py
-    excel_io.py         read a workbook's sheets, open a file in its default app
+    capacity_model.py    the real demand -> BOM -> routing -> utilization pipeline
+    etl_example.py       demo CSV cleanup, still illustrative
+    excel_io.py          read a workbook's sheets, open a file in its default app
   pages/               thin NiceGUI wrappers: inputs/outputs around a tools/ module
-    capacity_model_page.py
+    capacity_model_page.py   single page: "Run Model" (load workbook + run) / "Model Outputs"
     etl_page.py
-    excel_viewer_page.py
     home.py
 data/
-  ExampleExcelFile.xlsx   sample input workbook used by the Workbook Viewer tool
+  ExampleExcelFile.xlsx   sample input workbook for the capacity model
 ```
 
 The split matters: `hub/tools/*.py` are plain functions in, data out - you can
@@ -87,6 +87,10 @@ That's it — it shows up in the sidebar and on the home screen automatically.
 - File outputs go through a native "Save As" dialog
   (`hub/core/io_helpers.py`) rather than a browser download, since this runs
   in a native window, not a browser tab.
-- The two tools in `hub/tools/` (capacity model, CSV cleanup) are
-  illustrative demos — replace or remove them once you've ported your real
-  scripts in.
+- `hub/tools/capacity_model.py` expects a workbook with exactly these sheets:
+  `Program Monthly Demand`, `BOM`, `Route Information`, `Workcenter Information`.
+  All joins are inner joins, so a typo'd Part/Program/Workcenter code between
+  sheets will silently drop those rows rather than error — worth spot-checking
+  row counts if totals look low.
+- `etl_example.py` / `etl_page.py` is still an illustrative demo — a second
+  example of the tools/pages pattern, unrelated to the capacity model.
