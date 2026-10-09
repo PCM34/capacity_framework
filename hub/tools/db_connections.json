@@ -1,0 +1,38 @@
+[
+    {
+        "database":"HAD",
+        "type": "HANA",
+        "host_name": "mfcd1had.us.lmco.com",
+        "db_name": "",
+        "port": 30015,
+        "user":"RSC_MFC_Dallas_IE",
+        "password": "secret"
+    },
+    {
+        "database":"HAP",
+        "type": "HANA",
+        "host_name": "mfcd1hap.us.lmco.com",
+        "db_name": "",
+        "port": 30015,
+        "user":"RSC_MFC_Dallas_IE",
+        "password": "secret"
+    },
+    {
+        "database":"HAQ",
+        "type": "HANA",
+        "host_name": "mfcd1haq.us.lmco.com",
+        "db_name": "",
+        "port": 30315,
+        "user":"RSC_MFC_Dallas_IE",
+        "password": "secret"
+    },
+    {
+        "database":"IE_AWS",
+        "type": "POSTGRES",
+        "host_name": "mfc-dallas-ie.cfciumgits6l.us-gov-west-1.rds.amazonaws.com",
+        "db_name": "postgres",
+        "port": 5432,
+        "user":"postgres",
+        "password": "secret"
+    }
+]

@@ -15,7 +15,7 @@ from hub.core.display import for_table_display
 from hub.core.io_helpers import save_workbook_dialog
 from hub.core.paths import DATA_DIR
 from hub.core.registry import register
-from hub.tools.capacity_model import run_capacity_model, workcenter_program_breakdown
+from hub.tools.capacity_model import run_capacity_model, workcenter_program_breakdown, set_weeks_per_year, _WEEKS_PER_YEAR, set_overtime_hours_per_week, _OVERTIME_HOURS_PER_WEEK
 from hub.tools.excel_io import load_workbook, open_in_default_app
 
 EXAMPLE_FILE = DATA_DIR / 'ExampleExcelFile.xlsx'
@@ -25,6 +25,10 @@ def _build_stacked_chart(breakdown: pd.DataFrame, title: str, y_label: str,
                           available_hours: float | None = None) -> dict:
     """breakdown: index=Month, columns=Program, values=numeric -> a stacked-area ("sand") chart."""
     months = [m.strftime('%Y-%m') for m in breakdown.index]
+    # Assign deterministic colors to programs for consistent legends
+    programs = list(breakdown.columns)
+    _default_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    _color_map = {prog: _default_colors[i % len(_default_colors)] for i, prog in enumerate(programs)}
     traces = [
         {
             'x': months,
@@ -33,8 +37,9 @@ def _build_stacked_chart(breakdown: pd.DataFrame, title: str, y_label: str,
             'mode': 'lines',
             'stackgroup': 'one',
             'name': str(program),
+            'line': {'color': _color_map[program]},
         }
-        for program in breakdown.columns
+        for program in programs
     ]
     if available_hours is not None:
         traces.append({
@@ -52,6 +57,7 @@ def _build_stacked_chart(breakdown: pd.DataFrame, title: str, y_label: str,
             'yaxis': {'title': y_label},
             'margin': {'t': 40, 'l': 55, 'r': 20, 'b': 40},
             'legend': {'orientation': 'h', 'y': -0.25},
+            'showlegend': True,
         },
     }
 
@@ -78,7 +84,7 @@ def render() -> None:
         # ---------------------------------------------------------------- Run Model
         with ui.tab_panel(run_tab):
             file_label = ui.label().classes('text-sm text-gray-500')
-            sheets_container = ui.column().classes('w-full gap-2 mt-2')
+
 
             def refresh_controls() -> None:
                 file_label.text = f'Current file: {state["path"]}' if state['path'] else 'No file selected yet.'
@@ -142,6 +148,17 @@ def render() -> None:
                     return
                 await load_and_show(Path(result[0]))
 
+            async def generate_blank_template() -> None:
+                """Create a blank workbook matching the example template and prompt to save."""
+                try:
+                    template_sheets = await run.io_bound(load_workbook, EXAMPLE_FILE)
+                except Exception as exc:
+                    ui.notify(f'Could not load example template: {exc}', type='negative')
+                    return
+                blank_sheets = {name: df.head(0) for name, df in template_sheets.items()}
+                await save_workbook_dialog(blank_sheets, 'template_blank.xlsx')
+                ui.notify('Blank template generated.', type='positive')
+
             async def on_run_model() -> None:
                 if not state['sheets']:
                     ui.notify('Load a workbook first.', type='warning')
@@ -159,12 +176,21 @@ def render() -> None:
                 top_tabs.set_value(output_tab)
                 ui.notify('Model run complete.', type='positive')
 
-            with ui.row().classes('items-center gap-2'):
+            # Weeks per year and Overtime hours inputs – centered above the file label
+            with ui.row().classes('items-center gap-4 justify-center mt-3'):
+                weeks_input = ui.number('Weeks per year', value=_WEEKS_PER_YEAR, min=1, max=52, step=1, on_change=lambda e: set_weeks_per_year(int(e.value))).props('filled').style('width:150px')
+                overtime_input = ui.number('Overtime hrs per week', value=_OVERTIME_HOURS_PER_WEEK, min=0, max=100, step=1, on_change=lambda e: set_overtime_hours_per_week(int(e.value))).props('filled').style('width:150px')
+                run_button = ui.button('Run Capacity Model', icon='play_arrow', on_click=on_run_model).props('outline')
+            # File label below the controls
+            file_label = ui.label().classes('text-sm text-gray-500')
+            # File action buttons
+            with ui.row().classes('items-center gap-2 justify-center'):
                 ui.button('Open in Excel', icon='open_in_new', on_click=open_current_in_excel).props('outline')
                 refresh_button = ui.button('Refresh', icon='refresh', on_click=refresh_current).props('outline')
                 ui.button('Choose a different file...', icon='folder_open', on_click=choose_file).props('outline')
-            with ui.row().classes('items-center gap-2 mt-3'):
-                run_button = ui.button('Run Capacity Model', icon='play_arrow', on_click=on_run_model)
+                ui.button('Generate Blank Template', icon='add', on_click=generate_blank_template).props('outline')
+            # Sheet viewer container (below controls)
+            sheets_container = ui.column().classes('w-full gap-2 mt-2')
             refresh_controls()
 
         # ------------------------------------------------------------- Model Outputs
