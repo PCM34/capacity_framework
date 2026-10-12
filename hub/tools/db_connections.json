@@ -20,7 +20,7 @@
     {
         "database":"HAQ",
         "type": "HANA",
-        "host_name": "mfcd1haq.us.lmco.com",
+        "host_name": "asfd",
         "db_name": "",
         "port": 30315,
         "user":"RSC_MFC_Dallas_IE",
@@ -29,7 +29,7 @@
     {
         "database":"IE_AWS",
         "type": "POSTGRES",
-        "host_name": "mfc-dallas-ie.cfciumgits6l.us-gov-west-1.rds.amazonaws.com",
+        "host_name": "asdf",
         "db_name": "postgres",
         "port": 5432,
         "user":"postgres",

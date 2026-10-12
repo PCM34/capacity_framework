@@ -12,10 +12,11 @@ import webview
 from nicegui import app, background_tasks, run, ui
 
 from hub.core.display import for_table_display
-from hub.core.io_helpers import save_workbook_dialog
+from hub.core.io_helpers import save_with_custom_writer, save_workbook_dialog
 from hub.core.paths import DATA_DIR
 from hub.core.registry import register
 from hub.tools.capacity_model import run_capacity_model, workcenter_program_breakdown, set_weeks_per_year, _WEEKS_PER_YEAR, set_overtime_hours_per_week, _OVERTIME_HOURS_PER_WEEK
+from hub.tools.capacity_model_export import write_capacity_model_workbook
 from hub.tools.excel_io import load_workbook, open_in_default_app
 
 EXAMPLE_FILE = DATA_DIR / 'ExampleExcelFile.xlsx'
@@ -164,6 +165,8 @@ def render() -> None:
                     ui.notify('Load a workbook first.', type='warning')
                     return
                 run_button.disable()
+                run_button.props('loading')
+                running_status.set_visibility(True)
                 try:
                     result = await run.cpu_bound(run_capacity_model, state['sheets'])
                 except Exception as exc:  # noqa: BLE001 - surface any model error to the user
@@ -171,16 +174,30 @@ def render() -> None:
                     return
                 finally:
                     run_button.enabled = state['sheets'] is not None
+                    run_button.props(remove='loading')
+                    running_status.set_visibility(False)
                 state['result'] = result
                 populate_outputs(result)
                 top_tabs.set_value(output_tab)
-                ui.notify('Model run complete.', type='positive')
+                zero_capacity = result.get('zero_capacity_workcenters') or []
+                if zero_capacity:
+                    ui.notify(
+                        f'Model run complete, but these workcenters have zero/missing capacity '
+                        f'this period and got no demand applied: {", ".join(zero_capacity)}',
+                        type='warning', multi_line=True, timeout=10000,
+                    )
+                else:
+                    ui.notify('Model run complete.', type='positive')
 
             # Weeks per year and Overtime hours inputs – centered above the file label
             with ui.row().classes('items-center gap-4 justify-center mt-3'):
                 weeks_input = ui.number('Weeks per year', value=_WEEKS_PER_YEAR, min=1, max=52, step=1, on_change=lambda e: set_weeks_per_year(int(e.value))).props('filled').style('width:150px')
                 overtime_input = ui.number('Overtime hrs per week', value=_OVERTIME_HOURS_PER_WEEK, min=0, max=100, step=1, on_change=lambda e: set_overtime_hours_per_week(int(e.value))).props('filled').style('width:150px')
                 run_button = ui.button('Run Capacity Model', icon='play_arrow', on_click=on_run_model).props('outline')
+                with ui.row().classes('items-center gap-2') as running_status:
+                    ui.spinner('dots', size='md', color='primary')
+                    ui.label('Running capacity model...').classes('text-sm text-gray-500')
+                running_status.set_visibility(False)
             # File label below the controls
             file_label = ui.label().classes('text-sm text-gray-500')
             # File action buttons
@@ -237,12 +254,10 @@ def render() -> None:
         if not result:
             ui.notify('Run the model first.', type='warning')
             return
-        sheets = {
-            'Raw Capacity Output': result['raw_output'],
-            'Workcenter Utilization': result['util_pivot'].reset_index(),
-            'Workcenter Hours Load': result['hours_pivot'].reset_index(),
-        }
-        await save_workbook_dialog(sheets, 'capacity_model_results.xlsx')
+        await save_with_custom_writer(
+            lambda path: write_capacity_model_workbook(result, path),
+            'capacity_model_results.xlsx',
+        )
 
     def populate_outputs(result: dict) -> None:
         outputs_container.clear()

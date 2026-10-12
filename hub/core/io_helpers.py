@@ -4,7 +4,7 @@ Centralized here because every tool page needs the same "save my results"
 button, and it must go through the native OS dialog (there's no browser tab
 to drive a normal download in native window mode).
 """
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import pandas as pd
 import webview
@@ -52,4 +52,19 @@ async def save_workbook_dialog(sheets: Mapping[str, pd.DataFrame], default_filen
                 df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
 
     await run.io_bound(_write)
+    ui.notify(f'Saved to {path}', type='positive')
+
+
+async def save_with_custom_writer(write_fn: Callable[[str], None], default_filename: str,
+                                   file_types: tuple[str, ...] = ('Excel Files (*.xlsx)', 'All files (*.*)'),
+                                   extension: str = '.xlsx') -> None:
+    """Open a native Save As dialog, then hand the chosen path to write_fn(path).
+
+    For exports that need more than a plain sheet-per-DataFrame dump (e.g. cell
+    formatting) -- the caller owns the actual writing, this just owns the dialog.
+    """
+    path = await _prompt_save_path(default_filename, file_types, extension)
+    if path is None:
+        return
+    await run.io_bound(write_fn, path)
     ui.notify(f'Saved to {path}', type='positive')

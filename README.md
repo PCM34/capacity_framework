@@ -27,9 +27,11 @@ hub/
     display.py         ui.table-safe DataFrame formatting (stringifies date headers, etc.)
     paths.py           PROJECT_ROOT / DATA_DIR constants
   tools/               pure business logic, no UI code - script authors live here
-    capacity_model.py    the real demand -> BOM -> routing -> utilization pipeline
-    etl_example.py       demo CSV cleanup, still illustrative
-    excel_io.py          read a workbook's sheets, open a file in its default app
+    capacity_model.py          the real demand -> BOM -> routing -> utilization pipeline
+    capacity_model_export.py   colored Excel export (utilization-driven cell highlighting)
+    timephase_function.py      effective-dated parameter overrides (merge_asof based)
+    etl_example.py             demo CSV cleanup, still illustrative
+    excel_io.py                read a workbook's sheets, open a file in its default app
   pages/               thin NiceGUI wrappers: inputs/outputs around a tools/ module
     capacity_model_page.py   single page: "Run Model" (load workbook + run) / "Model Outputs"
     etl_page.py
@@ -78,6 +80,25 @@ involvement. `hub/pages/*.py` only handle widgets and wiring.
 
 That's it — it shows up in the sidebar and on the home screen automatically.
 
+## Testing
+
+`tests/test_capacity_model.py` is a regression test for the capacity model
+pipeline: it runs `run_capacity_model` against a frozen workbook snapshot
+(`tests/fixtures/example_workbook.xlsx`, independent of `data/ExampleExcelFile.xlsx`
+so it doesn't break every time that file gets edited for active development)
+and checks the output against known-good values in `tests/fixtures/expected_*.csv`.
+
+```
+.venv\Scripts\python.exe -m pytest tests/ -v
+```
+
+If you deliberately change the pipeline and the new numbers are correct,
+regenerate the fixtures and call out why in the commit:
+
+```
+.venv\Scripts\python.exe -m scripts.regenerate_capacity_model_fixtures
+```
+
 ## Notes
 
 - `requirements.txt` is a full pinned snapshot (`pip freeze`) so every
@@ -87,10 +108,12 @@ That's it — it shows up in the sidebar and on the home screen automatically.
 - File outputs go through a native "Save As" dialog
   (`hub/core/io_helpers.py`) rather than a browser download, since this runs
   in a native window, not a browser tab.
-- `hub/tools/capacity_model.py` expects a workbook with exactly these sheets:
-  `Program Monthly Demand`, `BOM`, `Route Information`, `Workcenter Information`.
-  All joins are inner joins, so a typo'd Part/Program/Workcenter code between
-  sheets will silently drop those rows rather than error — worth spot-checking
-  row counts if totals look low.
+- `hub/tools/capacity_model.py` expects a workbook with these sheets:
+  `Program Monthly Demand`, `BOM`, `Annual Max Limits`, `Part Route Map`,
+  `Route Information`, `Workcenter Information`, plus the optional time-phased
+  override sheets `TP Workcenter`, `TP Router Operation`, `TP Part Router`.
+  All joins are inner joins, so a typo'd Part/Program/Router/Workcenter code
+  between sheets will silently drop those rows rather than error — worth
+  spot-checking row counts if totals look low.
 - `etl_example.py` / `etl_page.py` is still an illustrative demo — a second
   example of the tools/pages pattern, unrelated to the capacity model.

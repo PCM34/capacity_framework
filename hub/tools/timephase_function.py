@@ -20,7 +20,6 @@ def apply_timephase(df1: pd.DataFrame, df2: pd.DataFrame,
         df2 = df2[df2['TP Parameter'] == tp_param]
     df1[date1] = pd.to_datetime(df1[date1])
     df1['_orig_idx'] = df1.index
-    df1_sorted = df1.sort_values(date1)
     df2[date2] = pd.to_datetime(df2[date2]).astype(df1[date1].dtype)
     df2_subset = df2[[*keys2, date2, val2]].copy()
     rename_map = dict(zip(keys2, keys1))
